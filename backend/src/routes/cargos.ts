@@ -195,7 +195,14 @@ cargoRouter.get('/:id/timeline', (req: AuthRequest, res) => {
   setNode('verify_device', findAudit('verify_device'));
   setNode('start_transport', findAudit('start_transport'));
   setNode('arrive', findAudit('arrive'));
-  setNode('accept', findAudit('update_status'), '货物验收完成');
+
+  const acceptAudit = findAudit('accept');
+  if (acceptAudit) {
+    setNode('accept', acceptAudit, '验收通过，正常入库');
+  } else if (cargo.accept_time && cargo.status === 'accepted') {
+    const n = nodes.find(n => n.key === 'accept');
+    if (n) { n.status = 'done'; n.time = cargo.accept_time; n.user = '系统'; n.remark = '验收通过，正常入库'; }
+  }
 
   if (reports.length > 0) {
     const n = nodes.find(n => n.key === 'generate_report');

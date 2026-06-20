@@ -333,14 +333,11 @@ async function loadCargos() {
     if (selectedCargoId.value) {
       const found = cargos.value.find(c => c.id === selectedCargoId.value);
       if (found) {
-        if (selectedCargo.value?.id !== found.id || !selectedCargo.value) {
-          selectedCargo.value = found;
-          await loadDetailAndRender();
-        } else {
-          selectedCargo.value = { ...found };
-        }
+        selectedCargo.value = { ...found };
+        await loadDetailAndRender();
       } else {
         selectedCargo.value = null;
+        selectedCargoId.value = '';
         renderChart([]);
       }
     }

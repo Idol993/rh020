@@ -42,15 +42,79 @@ exceptionRouter.get('/', (req: AuthRequest, res) => {
   ok(res, paginate(all, Number(page), Number(pageSize)));
 });
 
+const suggestionMap: Record<string, string> = {
+  over_temp: '1. 立即检查制冷设备运行状态；2. 调整温度设定至规定范围；3. 查看车门是否未关好；4. 如设备故障，联系维修人员并转移货物',
+  low_temp: '1. 检查制冷设备是否过度制冷；2. 适当调高温度设定；3. 检查货物是否受冻损坏；4. 如传感器故障，更换标签设备',
+  humidity_abnormal: '1. 检查湿度调节设备；2. 如湿度过高开启除湿；3. 如湿度过低检查加湿设备；4. 查看是否有漏水或积水',
+  temp_fluctuation: '1. 检查温控系统稳定性；2. 减少开关门次数；3. 检查保温层是否完好；4. 校准温度传感器',
+  overtime_single: '1. 检查单次超温原因；2. 评估货物是否受影响；3. 记录并分析异常原因；4. 制定预防措施',
+  overtime_total: '1. 累计超温时长超标，启动质量评估；2. 检查全程温控曲线；3. 评估货物品质影响；4. 必要时启动不合格品处理流程',
+  tag_offline: '1. 检查标签通信状态；2. 重新绑定或激活标签；3. 如信号弱，调整位置；4. 更换备用标签',
+  tag_low_battery: '1. 及时更换标签电池；2. 检查电池续航异常原因；3. 准备备用标签',
+  sensor_error: '1. 检查传感器数据准确性；2. 校准或更换传感器；3. 使用备用设备监控',
+  refrigeration_unit_error: '1. 立即检查制冷机组；2. 切换备用机组；3. 联系维修人员；4. 评估货物转移可行性',
+  door_open_long: '1. 检查车门是否关闭；2. 核实装卸货进度；3. 减少开门时间；4. 检查门禁系统',
+  unauthorized_door: '1. 核实开门授权情况；2. 查看监控记录；3. 调查异常原因；4. 加强门禁管理',
+  route_deviation: '1. 联系司机确认位置；2. 核实是否有合理绕行；3. 评估对运输时效和温控的影响；4. 加强路线监控',
+  timeout_arrival: '1. 联系司机了解延误原因；2. 评估货物温控状态；3. 调整收货安排；4. 更新运输计划',
+  warehouse_zone_temp: '1. 检查库区温控设备；2. 核实货物摆放是否影响通风；3. 校准温度传感器；4. 必要时转移货物',
+  zone_temp_diff: '1. 检查库区气流分布；2. 调整风机运行；3. 优化货物摆放；4. 增加监测点',
+};
+
 exceptionRouter.get('/:id', (req: AuthRequest, res) => {
-  const exc = db.prepare(`SELECT e.*, c.cargo_no, c.name as cargo_name FROM exception_records e
-    LEFT JOIN cargos c ON e.cargo_id = c.id WHERE e.id = ?`).get(req.params.id);
+  const exc = db.prepare(`SELECT e.*, c.cargo_no, c.name as cargo_name, c.category, c.sub_category, c.status as cargo_status,
+                                  c.temp_min, c.temp_max, c.humidity_min, c.humidity_max,
+                                  t.tag_no, t.battery_level, u.name as handler_name
+                           FROM exception_records e
+                           LEFT JOIN cargos c ON e.cargo_id = c.id
+                           LEFT JOIN io_tags t ON e.tag_id = t.id
+                           LEFT JOIN users u ON e.current_handler = u.id
+                           WHERE e.id = ?`).get(req.params.id) as any;
   if (!exc) return fail(res, '异常不存在', 404, 404);
+
   const handlings = db.prepare(`SELECT h.*, u.name as handler_name, uv.name as verifier_name
     FROM exception_handlings h LEFT JOIN users u ON h.handler_id = u.id
-    LEFT JOIN users uv ON h.verifier_id = uv.id WHERE h.exception_id = ? ORDER BY h.handle_time`)
+    LEFT JOIN users uv ON h.verifier_id = uv.id WHERE h.exception_id = ? ORDER BY h.handle_time DESC`)
     .all(req.params.id);
-  ok(res, { ...exc, handlings });
+
+  let recentTempData: any[] = [];
+  let historyExceptions: any[] = [];
+  let suggestion = '';
+
+  if (exc.cargo_id) {
+    recentTempData = db.prepare(`SELECT temperature, humidity, collection_time, location
+      FROM temperature_data WHERE cargo_id = ? ORDER BY collection_time DESC LIMIT 50`)
+      .all(exc.cargo_id).reverse();
+
+    historyExceptions = db.prepare(`SELECT id, type, level, status, occur_time, description
+      FROM exception_records WHERE cargo_id = ? AND id != ? ORDER BY occur_time DESC LIMIT 5`)
+      .all(exc.cargo_id, exc.id);
+  }
+
+  suggestion = suggestionMap[exc.type] || '请根据实际情况采取相应处置措施，确保货物安全。';
+
+  const timeline = [
+    { status: 'pending', label: '待接单', done: true, time: exc.occur_time, user: null, remark: '异常触发' },
+  ];
+  if (exc.status !== 'pending') {
+    timeline.push({ status: 'processing', label: '处理中', done: exc.status !== 'pending', time: null, user: exc.handler_name, remark: '已分配处理人' });
+  }
+  if (exc.status === 'pending_verification' || exc.status === 'closed') {
+    timeline.push({ status: 'pending_verification', label: '待验证', done: true, time: handlings[0]?.handle_time || null, user: handlings[0]?.handler_name || null, remark: handlings[0]?.action || '' });
+  }
+  if (exc.status === 'closed') {
+    const vh = handlings.find((h: any) => h.verify_status === 'passed');
+    timeline.push({ status: 'closed', label: '已闭环', done: true, time: vh?.verify_time || null, user: vh?.verifier_name || null, remark: vh?.verify_remark || '验证通过' });
+  }
+
+  ok(res, {
+    ...exc,
+    handlings,
+    recent_temp_data: recentTempData,
+    history_exceptions: historyExceptions,
+    suggestion,
+    status_timeline: timeline,
+  });
 });
 
 exceptionRouter.post('/auto-detect', (req: AuthRequest, res) => {
