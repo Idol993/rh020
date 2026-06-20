@@ -122,7 +122,11 @@ async function loadDetail() {
 
 async function loadTempData() {
   const r = await request.get<any>('/temperature/cargo/' + cargo.value.id, { pageSize: 500 });
-  tempData.value = r.data || [];
+  const resp = r.data || {};
+  tempData.value = resp.temperature_data || resp || [];
+  if (resp.cargo) {
+    cargo.value = { ...cargo.value, ...resp.cargo };
+  }
   await nextTick();
   renderChart();
 }

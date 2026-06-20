@@ -112,8 +112,13 @@
           <el-col :span="12"><el-form-item label="有效期至"><el-date-picker v-model="form.expiry_date" type="date" value-format="YYYY-MM-DD" style="width:100%" /></el-form-item></el-col>
           <el-col :span="12"><el-form-item label="货物价值"><el-input-number v-model="form.value" :min="0" :precision="2" style="width:100%" /></el-form-item></el-col>
           <el-col :span="12"><el-form-item label="温控规则" prop="rule_id">
-            <el-select v-model="form.rule_id" style="width:100%" placeholder="自动匹配或手动选择">
-              <el-option v-for="r in rules" :key="r.id" :label="r.name + ` (${r.temp_min}~${r.temp_max}℃)`" :value="r.id" />
+            <el-select v-model="form.rule_id" style="width:100%" placeholder="自动匹配或手动选择" filterable>
+              <el-option
+                v-for="r in filteredRules"
+                :key="r.id"
+                :label="r.name + ` (${r.temp_min}~${r.temp_max}℃, ${r.humidity_min}~${r.humidity_max}%)`"
+                :value="r.id"
+              />
             </el-select>
           </el-form-item></el-col>
           <el-col :span="24"><el-form-item label="发货方" prop="shipper"><el-input v-model="form.shipper" /></el-form-item></el-col>
@@ -151,7 +156,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed } from 'vue';
+import { ref, reactive, onMounted, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox, type FormRules, type FormInstance } from 'element-plus';
 import { Plus, Box } from '@element-plus/icons-vue';
@@ -183,6 +188,19 @@ const formRules: FormRules = {
 };
 const rules = ref<any[]>([]);
 const vehicles = ref<any[]>([]);
+
+const filteredRules = computed(() => {
+  if (!form.category) return rules.value;
+  return rules.value.filter(r => r.category === form.category);
+});
+
+watch(showCreate, (v) => {
+  if (v) {
+    formRef.value?.resetFields();
+    Object.assign(form, { name: '', category: 'pharmacy', sub_category: 'vaccine', specification: '', quantity: 1, unit: '箱', value: 0, shipper: '', receiver: '', receiver_address: '', transport_no: '', vehicle_id: '', rule_id: '' });
+    setTimeout(matchRule, 50);
+  }
+});
 
 const bindVisible = ref(false);
 const currentCargo = ref<any>();

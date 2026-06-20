@@ -179,9 +179,15 @@ tempRouter.get('/tag/:tagId', (req: AuthRequest, res) => {
 });
 
 tempRouter.get('/realtime/cargos', (req: AuthRequest, res) => {
-  const { status = 'in_transit,arrived,in_warehouse' } = req.query;
+  const { status = 'in_transit,arrived,in_warehouse,accepted', category } = req.query;
   const statusList = (status as string).split(',');
   const placeholders = statusList.map(() => '?').join(',');
+  const params: unknown[] = [...statusList];
+  let where = `WHERE c.status IN (${placeholders})`;
+  if (category) {
+    where += ' AND c.category = ?';
+    params.push(category);
+  }
   const data = db.prepare(`
     SELECT c.id, c.cargo_no, c.name, c.category, c.sub_category, c.status, c.transport_no,
            r.temp_min, r.temp_max, r.humidity_min, r.humidity_max,
@@ -196,9 +202,9 @@ tempRouter.get('/realtime/cargos', (req: AuthRequest, res) => {
     LEFT JOIN io_tags t ON c.id = t.cargo_id
     LEFT JOIN vehicles v ON c.vehicle_id = v.id
     LEFT JOIN users u ON v.driver_id = u.id
-    WHERE c.status IN (${placeholders})
+    ${where}
     ORDER BY c.created_at DESC
-  `).all(...statusList);
+  `).all(...params);
   ok(res, data);
 });
 

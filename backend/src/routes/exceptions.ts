@@ -96,7 +96,7 @@ exceptionRouter.post('/auto-detect', (req: AuthRequest, res) => {
             temperature: d.temperature,
             threshold_info: `温度阈值: ${cargo.temp_min}~${cargo.temp_max}℃，超温单次时长阈值: ${cargo.single_overtime_limit}分钟`,
             duration_minutes: singleDuration,
-            occur_time: overTempStart,
+            occur_time: overTempStart ?? d.collection_time,
           });
         } else {
           exceptions.push({

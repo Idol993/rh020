@@ -658,7 +658,7 @@ function seedDemoData(userMap: Record<string, string>, wh1Id: string, wh2Id: str
       uuidv4(), reportNo, c.id,
       cargo.outbound_time, cargo.arrival_time,
       total, pass, pass,
-      compliant ? 98.7 : 97.3, compliant ? 99.1 : 98.1,
+      compliant ? 0.987 : 0.973, compliant ? 0.991 : 0.981,
       total >= 120 ? 3 : 0, 0, 15, 0, 2, 5,
       compliant ? 'compliant' : 'basically_compliant',
       compliant ? '全程温控合规，符合GSP/GMP标准要求。' : '温度达标率97.3%，存在一般异常3起，不影响货物品质。',

@@ -161,17 +161,16 @@ async function loadCargos() {
     if (selectedCargoId.value) {
       const found = cargos.value.find(c => c.id === selectedCargoId.value);
       if (found) {
-        selectedCargo.value = found;
-        await loadDetailAndRender();
+        if (selectedCargo.value?.id !== found.id || !selectedCargo.value) {
+          selectedCargo.value = found;
+          await loadDetailAndRender();
+        } else {
+          selectedCargo.value = { ...found };
+        }
       } else {
         selectedCargo.value = null;
-        selectedCargoId.value = '';
-        sessionStorage.removeItem(STORAGE_KEY);
         renderChart([]);
       }
-    } else {
-      selectedCargo.value = null;
-      renderChart([]);
     }
   } finally {
     loading.value = false;
@@ -180,12 +179,11 @@ async function loadCargos() {
 
 async function handleRowChange(row: any) {
   if (!row) return;
+  if (selectedCargoId.value && selectedCargoId.value === row.id) return;
   selectedCargo.value = row;
   selectedCargoId.value = row.id;
   sessionStorage.setItem(STORAGE_KEY, row.id);
-  if (row) {
-    await loadDetailAndRender();
-  }
+  await loadDetailAndRender();
 }
 
 async function loadDetailAndRender() {

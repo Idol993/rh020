@@ -27,21 +27,18 @@ ruleRouter.get('/:id', (req: AuthRequest, res) => {
 });
 
 ruleRouter.get('/match/auto', (req: AuthRequest, res) => {
-  const { category, sub_category, storage_type, transport_mode } = req.query;
+  const { category, sub_category, storage_type } = req.query;
   if (!category || !sub_category) return fail(res, '品类和细分类型必填');
-  let st = storage_type || 'transport';
-  let sql = `SELECT * FROM temperature_rules WHERE status = 'approved' AND category = ? AND sub_category = ? AND storage_type = ?`;
-  const params: unknown[] = [category, sub_category, st];
-  if (transport_mode) { sql += ' AND (transport_mode IS NULL OR transport_mode = ?)'; params.push(transport_mode); }
-  sql += ' ORDER BY is_custom ASC, transport_mode IS NULL ASC LIMIT 1';
-  let rule = db.prepare(sql).get(...params) as TemperatureRule | undefined;
-  if (!rule && st !== 'transport') {
-    const fallbackSql = `SELECT * FROM temperature_rules WHERE status = 'approved' AND category = ? AND sub_category = ? AND storage_type = 'transport' ORDER BY is_custom ASC, transport_mode IS NULL ASC LIMIT 1`;
-    rule = db.prepare(fallbackSql).get(category, sub_category) as TemperatureRule | undefined;
+  const st = storage_type || 'transport';
+  const sql = `SELECT * FROM temperature_rules WHERE status = 'approved' AND category = ? AND sub_category = ? AND storage_type = ? ORDER BY is_custom ASC, transport_mode IS NOT NULL ASC LIMIT 1`;
+  let rule = db.prepare(sql).get(category, sub_category, st) as TemperatureRule | undefined;
+  if (!rule) {
+    const anySql = `SELECT * FROM temperature_rules WHERE status = 'approved' AND category = ? AND sub_category = ? ORDER BY CASE storage_type WHEN ? THEN 0 WHEN 'transport' THEN 1 WHEN 'warehouse' THEN 2 ELSE 3 END, is_custom ASC LIMIT 1`;
+    rule = db.prepare(anySql).get(category, sub_category, st) as TemperatureRule | undefined;
   }
   if (!rule) {
-    const anySql = `SELECT * FROM temperature_rules WHERE status = 'approved' AND category = ? AND sub_category = ? ORDER BY storage_type DESC, is_custom ASC LIMIT 1`;
-    rule = db.prepare(anySql).get(category, sub_category) as TemperatureRule | undefined;
+    const fallbackSql = `SELECT * FROM temperature_rules WHERE status = 'approved' AND category = ? ORDER BY is_custom ASC LIMIT 1`;
+    rule = db.prepare(fallbackSql).get(category) as TemperatureRule | undefined;
   }
   ok(res, rule || null);
 });

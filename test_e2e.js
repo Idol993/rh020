@@ -149,6 +149,38 @@ async function test() {
     }
   }
 
+  console.log('\n=== 批次问题2：货物详情温湿度曲线数据结构 ===');
+  const cargoDetailResp = await axios.get(BASE + '/temperature/cargo/' + cargo.id, { headers: headers() });
+  const dd = cargoDetailResp.data.data || {};
+  const cargoWrapperOk = !!dd.cargo;
+  const tempArrOk = Array.isArray(dd.temperature_data);
+  console.log(`${cargoWrapperOk && tempArrOk ? '✅' : '❌'} 数据结构正确: cargo=${cargoWrapperOk}, temperature_data数组=${tempArrOk}, 点数=${dd.temperature_data?.length ?? 0}`);
+  if (dd.temperature_data?.length > 0) {
+    const hasTempFld = dd.temperature_data[0].temperature !== undefined;
+    const hasTimeFld = dd.temperature_data[0].collection_time !== undefined;
+    console.log(`${hasTempFld && hasTimeFld ? '✅' : '❌'} 数据点字段完整: temperature=${hasTempFld}, collection_time=${hasTimeFld}`);
+  }
+
+  console.log('\n=== 批次问题3：实时监控品类筛选 ===');
+  const allList = await axios.get(BASE + '/temperature/realtime/cargos', { headers: headers() });
+  const freshList = await axios.get(BASE + '/temperature/realtime/cargos', { headers: headers(), params: { category: 'fresh' } });
+  const pharList = await axios.get(BASE + '/temperature/realtime/cargos', { headers: headers(), params: { category: 'pharmacy' } });
+  const allOk = Array.isArray(allList.data.data);
+  const freshOk = freshList.data.data.every(x => x.category === 'fresh');
+  const pharOk = pharList.data.data.every(x => x.category === 'pharmacy');
+  console.log(`${allOk ? '✅' : '❌'} 全部列表: 共${allList.data.data?.length ?? 0}条`);
+  console.log(`${freshOk ? '✅' : '❌'} 筛选生鲜: 共${freshList.data.data?.length ?? 0}条，全部category=fresh`);
+  console.log(`${pharOk ? '✅' : '❌'} 筛选医药: 共${pharList.data.data?.length ?? 0}条，全部category=pharmacy`);
+
+  console.log('\n=== 批次问题4：合格率百分比规范 ===');
+  const reports = await axios.get(BASE + '/reports', { headers: headers(), params: { pageSize: 5 } });
+  const firstReport = reports.data.data.list?.[0];
+  const rateOk = firstReport && Number(firstReport.temp_pass_rate) < 2 && Number(firstReport.temp_pass_rate) > 0;
+  console.log(`${rateOk ? '✅' : '❌'} 报告temp_pass_rate是小数(0~1): ${firstReport?.temp_pass_rate}`);
+  const stats = await axios.get(BASE + '/stats/dashboard', { headers: headers() });
+  const statsOk = stats.data.data.temp_pass_rate_30d > 0 && stats.data.data.temp_pass_rate_30d <= 100;
+  console.log(`${statsOk ? '✅' : '❌'} Dashboard达标率是百分比(0~100): ${stats.data.data.temp_pass_rate_30d}%`);
+
   console.log('\n=== 测试完成 ===\n');
 }
 

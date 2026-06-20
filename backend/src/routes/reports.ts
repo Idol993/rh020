@@ -108,13 +108,13 @@ reportRouter.post('/generate', requireRoles(['qc', 'warehouse_manager', 'quality
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(id, report_no, cargo_id, effective_start, effective_end,
       data.length, tempQualified, humidQualified,
-      tempRate * 100, humidRate * 100,
+      tempRate, humidRate,
       totalCount, criticalCount,
       totalOvertime, 0, doorOpenCount, totalDoorOpen,
       conclusion, conclusion_detail, req.user!.id, n);
 
   addAuditLog(req.user!.id, 'report', 'generate', { targetId: id });
-  ok(res, { id, report_no, conclusion, temp_pass_rate: tempRate * 100 }, '合规报告生成成功');
+  ok(res, { id, report_no, conclusion, temp_pass_rate: tempRate }, '合规报告生成成功');
 });
 
 reportRouter.post('/:id/sign', requireRoles(['quality_director']), (req: AuthRequest, res) => {
@@ -170,7 +170,7 @@ settlementRouter.post('/calculate', requireRoles(['qc', 'warehouse_manager', 'qu
     const r = db.prepare('SELECT * FROM compliance_reports WHERE id = ?').get(report_id) as any;
     if (!r) return fail(res, '合规报告不存在');
     if (r.conclusion === 'compliant') { conclusion = 'compliant'; reason = '全程温控合规'; }
-    else if (r.conclusion === 'basically_compliant') { conclusion = 'normal_exception'; ratio = 0.1; reason = `温度达标率${Number(r.temp_pass_rate).toFixed(1)}%，存在一般异常`; }
+    else if (r.conclusion === 'basically_compliant') { conclusion = 'normal_exception'; ratio = 0.1; reason = `温度达标率${(Number(r.temp_pass_rate) * 100).toFixed(1)}%，存在一般异常`; }
     else { conclusion = 'serious_exception'; ratio = 0.5; reason = `温控不达标，存在严重异常`; }
   } else {
     const excCount = db.prepare('SELECT level, COUNT(*) as count FROM exception_records WHERE cargo_id = ? GROUP BY level')
@@ -285,7 +285,7 @@ statsRouter.get('/dashboard', (req: AuthRequest, res) => {
     in_transit: inTransit.count,
     in_warehouse: inWarehouse.count,
     created_today: totalToday.count,
-    temp_pass_rate_30d: tempPassRateData.rate || 98.5,
+    temp_pass_rate_30d: tempPassRateData.rate ? (tempPassRateData.rate * 100) : 98.5,
     pending_exceptions: pendingExceptions,
     tag_online_rate: totalTags.count > 0 ? (onlineTags.count / totalTags.count) * 100 : 100,
     vehicle_utilization: totalVehicles.count > 0 ? (onlineVehicles.count / totalVehicles.count) * 100 : 0,
