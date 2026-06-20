@@ -126,9 +126,11 @@ import { Monitor, Refresh, RefreshRight, List, DataAnalysis, TrendCharts, Pointe
 import request from '@/utils/request';
 import { fmtDate, fmtNumber, categoryMap, cargoStatusMap } from '@/utils/format';
 
+const STORAGE_KEY = 'monitor_selected_cargo_id';
 const loading = ref(false);
 const cargos = ref<any[]>([]);
 const selectedCargo = ref<any>(null);
+const selectedCargoId = ref<string>(sessionStorage.getItem(STORAGE_KEY) || '');
 const chartRef = ref<HTMLDivElement>();
 let chartInstance: echarts.ECharts | null = null;
 let timer: number | null = null;
@@ -155,14 +157,21 @@ async function loadCargos() {
     if (filters.category) params.category = filters.category;
     const res = await request.get<any>('/temperature/realtime/cargos', params);
     cargos.value = res.data || [];
-    if (selectedCargo.value) {
-      const found = cargos.value.find(c => c.id === selectedCargo.value.id);
+
+    if (selectedCargoId.value) {
+      const found = cargos.value.find(c => c.id === selectedCargoId.value);
       if (found) {
         selectedCargo.value = found;
-        loadDetailAndRender();
+        await loadDetailAndRender();
       } else {
         selectedCargo.value = null;
+        selectedCargoId.value = '';
+        sessionStorage.removeItem(STORAGE_KEY);
+        renderChart([]);
       }
+    } else {
+      selectedCargo.value = null;
+      renderChart([]);
     }
   } finally {
     loading.value = false;
@@ -170,7 +179,10 @@ async function loadCargos() {
 }
 
 async function handleRowChange(row: any) {
+  if (!row) return;
   selectedCargo.value = row;
+  selectedCargoId.value = row.id;
+  sessionStorage.setItem(STORAGE_KEY, row.id);
   if (row) {
     await loadDetailAndRender();
   }
@@ -181,9 +193,12 @@ async function loadDetailAndRender() {
   try {
     const res = await request.get<any>('/temperature/cargo/' + selectedCargo.value.id);
     const data = res.data || {};
-    selectedCargo.value = { ...selectedCargo.value, ...data.cargo };
+    if (data.cargo) {
+      selectedCargo.value = { ...selectedCargo.value, ...data.cargo };
+    }
     await nextTick();
-    renderChart(data.temperature_data || []);
+    const tempData = data.temperature_data || [];
+    renderChart(tempData);
   } catch (e) {
     await nextTick();
     renderChart([]);
@@ -196,7 +211,7 @@ function renderChart(tempData: any[]) {
     chartInstance = echarts.init(chartRef.value);
   }
 
-  const times = tempData.map(d => fmtDate(d.collection_time, 'HH:mm'));
+  const times = tempData.map(d => fmtDate(d.collection_time, 'MM-DD HH:mm'));
   const temps = tempData.map(d => d.temperature);
   const humids = tempData.map(d => d.humidity);
   const tempMin = selectedCargo.value?.temp_min;
@@ -264,7 +279,7 @@ function renderChart(tempData: any[]) {
         type: 'line',
         smooth: false,
         yAxisIndex: 0,
-        data: tempMin !== undefined ? times.map(() => tempMin) : [],
+        data: (tempMin !== undefined && tempMin !== null) ? times.map(() => Number(tempMin)) : [],
         itemStyle: { color: '#67c23a' },
         lineStyle: { type: 'dashed', width: 1.5 },
         symbol: 'none',
@@ -274,8 +289,8 @@ function renderChart(tempData: any[]) {
         type: 'line',
         smooth: false,
         yAxisIndex: 0,
-        data: tempMax !== undefined ? times.map(() => tempMax) : [],
-        itemStyle: { color: '#67c23a' },
+        data: (tempMax !== undefined && tempMax !== null) ? times.map(() => Number(tempMax)) : [],
+        itemStyle: { color: '#e6a23c' },
         lineStyle: { type: 'dashed', width: 1.5 },
         symbol: 'none',
       },
@@ -288,7 +303,7 @@ watch([() => filters.status, () => filters.category], () => {
 });
 
 function handleResize() {
-  chartInstance?.resize();
+  if (chartInstance) chartInstance.resize();
 }
 
 onMounted(() => {
@@ -303,8 +318,11 @@ onUnmounted(() => {
     timer = null;
   }
   window.removeEventListener('resize', handleResize);
-  chartInstance?.dispose();
-  chartInstance = null;
+  if (chartInstance) {
+    chartInstance.dispose();
+    chartInstance = null;
+  }
+  sessionStorage.removeItem(STORAGE_KEY);
 });
 </script>
 

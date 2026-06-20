@@ -170,7 +170,7 @@ settlementRouter.post('/calculate', requireRoles(['qc', 'warehouse_manager', 'qu
     const r = db.prepare('SELECT * FROM compliance_reports WHERE id = ?').get(report_id) as any;
     if (!r) return fail(res, '合规报告不存在');
     if (r.conclusion === 'compliant') { conclusion = 'compliant'; reason = '全程温控合规'; }
-    else if (r.conclusion === 'basically_compliant') { conclusion = 'normal_exception'; ratio = 0.1; reason = `温度达标率${r.temp_pass_rate.toFixed(1)}%，存在一般异常`; }
+    else if (r.conclusion === 'basically_compliant') { conclusion = 'normal_exception'; ratio = 0.1; reason = `温度达标率${Number(r.temp_pass_rate).toFixed(1)}%，存在一般异常`; }
     else { conclusion = 'serious_exception'; ratio = 0.5; reason = `温控不达标，存在严重异常`; }
   } else {
     const excCount = db.prepare('SELECT level, COUNT(*) as count FROM exception_records WHERE cargo_id = ? GROUP BY level')
@@ -183,19 +183,53 @@ settlementRouter.post('/calculate', requireRoles(['qc', 'warehouse_manager', 'qu
     else { conclusion = 'compliant'; reason = '无异常记录'; }
   }
 
+  const settlement_no = 'SET' + (Date.now() + Math.floor(Math.random() * 1000)).toString().slice(-10);
+  const amount = Number(contract_amount) || 0;
+  const deduction = amount * ratio;
+  const final = Math.max(0, amount - deduction);
+
+  ok(res, {
+    settlement_no,
+    cargo_id,
+    transport_no: cargo.transport_no,
+    shipper: cargo.shipper,
+    carrier: carrier || '默认承运商',
+    contract_amount: amount,
+    compliance_level: conclusion,
+    deduction_ratio: ratio,
+    deduction_amount: Number(deduction.toFixed(2)),
+    deduction_reason: reason,
+    final_amount: Number(final.toFixed(2)),
+    report_id: report_id || null,
+  }, '核算预览完成');
+});
+
+settlementRouter.post('/', requireRoles(['qc', 'warehouse_manager', 'quality_director']), (req: AuthRequest, res) => {
+  const s = req.body as any;
+  if (!s.cargo_id || s.contract_amount === undefined || !s.carrier) {
+    return fail(res, '缺少必要参数: cargo_id, contract_amount, carrier');
+  }
+  if (s.deduction_ratio === undefined || s.final_amount === undefined) {
+    return fail(res, '请先完成核算预览');
+  }
+  const dup = db.prepare('SELECT id FROM settlements WHERE cargo_id = ? AND status IN (\'calculated\', \'adjusted\', \'approved\', \'paid\') LIMIT 1').get(s.cargo_id);
+  if (dup) return fail(res, '该货物批次已有未完成或已完成的结算单，请勿重复创建');
+  const cargo = db.prepare('SELECT * FROM cargos WHERE id = ?').get(s.cargo_id) as Cargo | undefined;
+  if (!cargo) return fail(res, '货物不存在', 404, 404);
+
   const id = uuidv4();
-  const settlement_no = `SET${Date.now().toString().slice(-8)}`;
-  const deduction = contract_amount * ratio;
-  const final = contract_amount - deduction;
   const n = now();
   db.prepare(`INSERT INTO settlements (id, settlement_no, cargo_id, transport_no, shipper, carrier, contract_amount,
     compliance_level, deduction_ratio, deduction_amount, deduction_reason, final_amount, report_id, status, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'calculated', ?)`)
-    .run(id, settlement_no, cargo_id, cargo.transport_no, cargo.shipper, carrier || '默认承运商',
-      contract_amount, conclusion, ratio, deduction, reason, final, report_id || null, n);
+    .run(id, s.settlement_no || ('SET' + Date.now().toString().slice(-10)),
+      s.cargo_id, cargo.transport_no, cargo.shipper, s.carrier,
+      Number(s.contract_amount), s.compliance_level, Number(s.deduction_ratio),
+      Number(s.deduction_amount || 0), s.deduction_reason || '',
+      Number(s.final_amount), s.report_id || null, n);
 
-  addAuditLog(req.user!.id, 'settlement', 'calculate', { targetId: id });
-  ok(res, { id, settlement_no, compliance_level: conclusion, deduction_ratio: ratio * 100, deduction_amount: deduction, final_amount: final }, '结算已核算');
+  addAuditLog(req.user!.id, 'settlement', 'create', { targetId: id });
+  ok(res, { id, settlement_no: s.settlement_no }, '结算单创建成功');
 });
 
 settlementRouter.post('/:id/adjust', requireRoles(['quality_director']), (req: AuthRequest, res) => {
@@ -303,8 +337,9 @@ userRouter.get('/audit-logs', requireRoles(['quality_director']), (req: AuthRequ
 });
 
 userRouter.get('/trace/cargo/:id', (req: AuthRequest, res) => {
-  const cargo = db.prepare('SELECT * FROM cargos WHERE cargo_no = ? OR id = ?').get(req.params.id, req.params.id) as any;
-  if (!cargo) return fail(res, '货物不存在', 404, 404);
+  const key = req.params.id;
+  const cargo = db.prepare('SELECT c.*, r.name as rule_name, r.temp_min, r.temp_max, r.humidity_min, r.humidity_max, r.single_overtime_limit, r.total_overtime_limit, r.temp_fluctuation_limit FROM cargos c LEFT JOIN temperature_rules r ON c.rule_id = r.id WHERE c.cargo_no = ? OR c.id = ? OR c.transport_no = ?').get(key, key, key) as any;
+  if (!cargo) return fail(res, '货物不存在，请输入正确的批次号、运输单号或货物ID', 404, 404);
   const tags = db.prepare('SELECT * FROM io_tags WHERE cargo_id = ?').all(cargo.id);
   const bindings = db.prepare('SELECT b.*, u.name as operator_name FROM binding_logs b LEFT JOIN users u ON b.operator_id = u.id WHERE b.cargo_id = ? ORDER BY b.created_at').all(cargo.id);
   const tempData = db.prepare('SELECT * FROM temperature_data WHERE cargo_id = ? ORDER BY collection_time').all(cargo.id);
@@ -313,5 +348,5 @@ userRouter.get('/trace/cargo/:id', (req: AuthRequest, res) => {
   const settlements = db.prepare('SELECT * FROM settlements WHERE cargo_id = ? ORDER BY created_at').all(cargo.id);
   const audits = db.prepare(`SELECT a.*, u.name as user_name FROM audit_logs a LEFT JOIN users u ON a.user_id = u.id WHERE a.target_id = ? OR (a.target_type = 'cargo' AND a.target_id = ?) ORDER BY a.created_at`).all(cargo.id, cargo.id);
 
-  ok(res, { cargo, tags, bindings, temperature_data: tempData, exceptions, reports, settlements, audits });
+  ok(res, { cargo, tag: tags[0] || null, binding_logs: bindings, temperature_data: tempData, exceptions, reports, settlements, audit_logs: audits });
 });

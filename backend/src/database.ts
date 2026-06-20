@@ -10,6 +10,7 @@ let dbPath: string;
 
 class Database {
   private inner: SqlJsDatabase;
+  private inTransaction = false;
 
   constructor(inner: SqlJsDatabase) {
     this.inner = inner;
@@ -28,7 +29,7 @@ class Database {
         stmt.bind(params);
         stmt.step();
         stmt.free();
-        self.save();
+        if (!self.inTransaction) self.save();
         return { changes: inner.getRowsModified() || 0, lastInsertRowid: 0 };
       },
       get(...params: any[]): any {
@@ -52,6 +53,29 @@ class Database {
         return rows;
       },
     };
+  }
+
+  transaction<T extends (...args: any[]) => any>(fn: T): T {
+    const self = this;
+    return function(...args: any[]) {
+      const prevInTx = self.inTransaction;
+      if (prevInTx) {
+        return fn(...args);
+      }
+      try {
+        self.inTransaction = true;
+        self.inner.exec('BEGIN TRANSACTION');
+        const result = fn(...args);
+        self.inner.exec('COMMIT');
+        self.save();
+        return result;
+      } catch (e) {
+        try { self.inner.exec('ROLLBACK'); } catch (_) { /* noop */ }
+        throw e;
+      } finally {
+        self.inTransaction = false;
+      }
+    } as T;
   }
 
   pragma(_sql: string) {}
@@ -274,6 +298,7 @@ function createTables() {
       humidity_after REAL,
       handle_time TEXT NOT NULL,
       status TEXT DEFAULT 'completed',
+      verify_status TEXT DEFAULT 'pending',
       verifier_id TEXT,
       verify_remark TEXT,
       created_at TEXT NOT NULL
@@ -344,6 +369,13 @@ function createTables() {
       created_at TEXT NOT NULL
     );
   `);
+
+  try {
+    db.exec('ALTER TABLE exception_handlings ADD COLUMN verify_status TEXT DEFAULT \'pending\'');
+  } catch (_) { /* 字段可能已存在 */ }
+  try {
+    db.exec('ALTER TABLE binding_logs ADD COLUMN remark TEXT');
+  } catch (_) { /* 字段可能已存在 */ }
 }
 
 function seedInitialData() {
@@ -547,6 +579,31 @@ function seedDemoData(userMap: Record<string, string>, wh1Id: string, wh2Id: str
       tagIdx++;
     }
     insertedCargos.push({ id, temp_min: rule.temp_min, temp_max: rule.temp_max, humidity_min: rule.humidity_min, humidity_max: rule.humidity_max });
+  }
+
+  const insertAudit = db.prepare(`INSERT INTO audit_logs (id, user_id, module, action, target_type, target_id, remark, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
+  for (let i = 0; i < cargos.length; i++) {
+    const c = insertedCargos[i];
+    const cargo = db.prepare('SELECT cargo_no, status, created_at, outbound_time, arrival_time, accept_time FROM cargos WHERE id = ?').get(c.id);
+    if (!cargo) continue;
+
+    insertAudit.run(uuidv4(), userMap['qc01'], 'cargo', 'create', 'cargo', c.id, `创建货物批次: ${cargo.cargo_no}`, cargo.created_at);
+    insertAudit.run(uuidv4(), userMap['qc01'], 'cargo', 'bind_tag', 'cargo', c.id, `绑定IoT标签`, cargo.outbound_time);
+    insertAudit.run(uuidv4(), userMap['qc01'], 'cargo', 'verify_device', 'cargo', c.id, `设备校验通过`, cargo.outbound_time);
+    insertAudit.run(uuidv4(), userMap['qc01'], 'cargo', 'start_transport', 'cargo', c.id, `启运出库`, cargo.outbound_time);
+
+    if (cargo.arrival_time) {
+      insertAudit.run(uuidv4(), userMap['wh01'], 'cargo', 'arrive', 'cargo', c.id, `到库登记`, cargo.arrival_time);
+    }
+    if (cargo.accept_time) {
+      const action = cargo.status === 'accepted' ? 'accept' : 'reject';
+      const remark = cargo.status === 'accepted' ? '验收通过，正常入库' : '验收异常，拒收';
+      insertAudit.run(uuidv4(), userMap['wh01'], 'cargo', action, 'cargo', c.id, remark, cargo.accept_time);
+      if (cargo.status === 'accepted') {
+        insertAudit.run(uuidv4(), userMap['wh01'], 'cargo', 'put_in_warehouse', 'cargo', c.id, `入库上架`, cargo.accept_time);
+      }
+    }
   }
 
   const insertTemp = db.prepare(`INSERT INTO temperature_data (id, tag_id, cargo_id, temperature, humidity,

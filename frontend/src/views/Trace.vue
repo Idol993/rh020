@@ -11,9 +11,9 @@
       <div class="filter-bar">
         <el-input
           v-model="searchKeyword"
-          placeholder="请输入批次号或运输单号"
+          placeholder="请输入批次号 / 运输单号 / 货物 ID"
           clearable
-          style="width:320px"
+          style="width:360px"
           @keyup.enter="onSearch"
         >
           <template #prefix><el-icon><Search /></el-icon></template>
@@ -25,7 +25,7 @@
 
       <div v-if="!traceData && !loading" style="padding:80px 0;text-align:center;color:#909399">
         <el-icon style="font-size:64px;margin-bottom:16px;opacity:0.3"><Search /></el-icon>
-        <div style="font-size:15px">请输入批次号或运输单号进行查询</div>
+        <div style="font-size:15px">请输入批次号 / 运输单号 / 货物 ID 进行查询</div>
       </div>
 
       <div v-if="traceData" v-loading="loading">
@@ -72,6 +72,28 @@
           <el-descriptions-item label="出库时间">{{ fmtDate(traceData.cargo.outbound_time) }}</el-descriptions-item>
           <el-descriptions-item label="到库时间">{{ fmtDate(traceData.cargo.arrival_time) }}</el-descriptions-item>
           <el-descriptions-item label="验收时间">{{ fmtDate(traceData.cargo.accept_time) }}</el-descriptions-item>
+        </el-descriptions>
+
+        <div class="section-title">
+          <el-icon style="margin-right:6px"><DataLine /></el-icon>温控阈值配置
+        </div>
+        <el-descriptions :column="4" border size="small" style="margin-bottom:12px">
+          <el-descriptions-item label="规则名称">{{ traceData.cargo.rule_name || '已匹配规则' }}</el-descriptions-item>
+          <el-descriptions-item label="温度阈值">
+            <el-tag type="success" effect="plain">{{ traceData.cargo.temp_min }} ~ {{ traceData.cargo.temp_max }} ℃</el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="湿度阈值">
+            <el-tag type="primary" effect="plain">{{ traceData.cargo.humidity_min }} ~ {{ traceData.cargo.humidity_max }} %</el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="温度波动容忍">±{{ traceData.cargo.temp_fluctuation_limit ?? '-' }} ℃</el-descriptions-item>
+          <el-descriptions-item label="单次超温时长限">{{ traceData.cargo.single_overtime_limit ? traceData.cargo.single_overtime_limit + ' 分钟' : '未设置' }}</el-descriptions-item>
+          <el-descriptions-item label="累计超温时长限">{{ traceData.cargo.total_overtime_limit ? traceData.cargo.total_overtime_limit + ' 分钟' : '未设置' }}</el-descriptions-item>
+          <el-descriptions-item label="规则来源">
+            <el-tag size="small" :type="traceData.cargo.is_custom ? 'warning' : 'info'">{{ traceData.cargo.is_custom ? '自定义' : '系统内置' }}</el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="合规标准">
+            {{ traceData.cargo.category==='pharmacy' ? 'GSP / GMP' : '生鲜冷链标准' }}
+          </el-descriptions-item>
         </el-descriptions>
 
         <div class="section-title">
@@ -224,7 +246,7 @@
 import { ref, watch, nextTick } from 'vue';
 import * as echarts from 'echarts';
 import { ElMessage } from 'element-plus';
-import { Aim, Search, Box, Connection, TrendCharts, Warning, Document, Money, List, CircleCheck, WarningFilled, InfoFilled } from '@element-plus/icons-vue';
+import { Aim, Search, Box, Connection, TrendCharts, Warning, Document, Money, List, CircleCheck, WarningFilled, InfoFilled, DataLine } from '@element-plus/icons-vue';
 import request from '@/utils/request';
 import {
   fmtDate, fmtMoney, fmtNumber,

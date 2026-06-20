@@ -208,8 +208,17 @@ async function loadSelects() {
 
 async function matchRule() {
   if (!form.category || !form.sub_category) return;
-  const res = await request.get<any>('/rules/match/auto', { category: form.category, sub_category: form.sub_category, storage_type: 'transport' });
-  if (res.data) form.rule_id = res.data.id;
+  try {
+    const res = await request.get<any>('/rules/match/auto', { category: form.category, sub_category: form.sub_category, storage_type: 'transport' });
+    if (res.data && res.data.id) {
+      form.rule_id = res.data.id;
+      ElMessage.success('已自动匹配温控规则: ' + res.data.name);
+    } else {
+      ElMessage.warning('未匹配到预置规则，请手动选择温控规则');
+    }
+  } catch (e: any) {
+    ElMessage.warning('规则匹配失败: ' + (e?.response?.data?.message || '请手动选择'));
+  }
 }
 
 async function onCreate() {

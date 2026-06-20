@@ -198,8 +198,8 @@ exceptionRouter.post('/:id/handle', (req: AuthRequest, res) => {
   const id = uuidv4();
   const n = now();
   db.prepare(`INSERT INTO exception_handlings (id, exception_id, handler_id, action, description, attachment_urls,
-    temperature_after, humidity_after, handle_time, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?)`)
+    temperature_after, humidity_after, handle_time, status, verify_status, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', 'pending', ?)`)
     .run(id, exc.id, req.user!.id, action, description, attachment_urls || null,
       temperature_after ?? null, humidity_after ?? null, n, n);
   db.prepare("UPDATE exception_records SET status = 'pending_verification', current_handler = ? WHERE id = ?")
@@ -214,8 +214,11 @@ exceptionRouter.post('/:id/verify', requireRoles(['qc', 'quality_director', 'war
   if (!exc) return fail(res, '异常不存在', 404, 404);
   db.prepare("UPDATE exception_records SET status = ? WHERE id = ?").run(passed ? 'closed' : 'processing', exc.id);
   if (exc.status === 'pending_verification') {
-    db.prepare('UPDATE exception_handlings SET status = ?, verifier_id = ?, verify_remark = ? WHERE exception_id = ? ORDER BY handle_time DESC LIMIT 1')
-      .run(passed ? 'verified' : 'completed', req.user!.id, remark || '', exc.id);
+    const latestHandling = db.prepare('SELECT id FROM exception_handlings WHERE exception_id = ? ORDER BY handle_time DESC LIMIT 1').get(req.params.id) as any;
+    if (latestHandling) {
+      db.prepare('UPDATE exception_handlings SET status = ?, verify_status = ?, verifier_id = ?, verify_remark = ? WHERE id = ?')
+        .run(passed ? 'verified' : 'completed', passed ? 'passed' : 'rejected', req.user!.id, remark || '', latestHandling.id);
+    }
   }
   addAuditLog(req.user!.id, 'exception', passed ? 'verify_pass' : 'verify_reject', { targetId: exc.id, remark });
   ok(res, null, passed ? '验证通过，异常已闭环' : '需继续处理');
@@ -226,8 +229,8 @@ exceptionRouter.put('/:id/assign', requireRoles(['qc', 'warehouse_manager', 'qua
   const exc = db.prepare('SELECT * FROM exception_records WHERE id = ?').get(req.params.id) as ExceptionRecord | undefined;
   if (!exc) return fail(res, '异常不存在', 404, 404);
   db.prepare("UPDATE exception_records SET current_handler = ?, status = 'processing' WHERE id = ?").run(handler_id, exc.id);
-  addAuditLog(req.user!.id, 'exception', 'assign', { targetId: exc.id, remark: `指派给用户ID: ${handler_id}` });
-  ok(res, null, '已指派');
+  addAuditLog(req.user!.id, 'exception', 'assign', { targetId: exc.id, remark: '指派给用户ID: ' + handler_id });
+  ok(res, null, '已指派，状态更新为处理中');
 });
 
 exceptionRouter.get('/stats/summary', (req: AuthRequest, res) => {

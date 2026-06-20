@@ -47,7 +47,7 @@
           </template>
         </el-table-column>
         <el-table-column label="扣款比例" width="100" align="center">
-          <template #default="{row}">{{ fmtNumber(row.deduction_ratio * 100, 0) }}%</template>
+          <template #default="{row}">{{ fmtNumber(Number(row.deduction_ratio) * 100, 0) }}%</template>
         </el-table-column>
         <el-table-column label="扣款金额" width="120" align="right">
           <template #default="{row}">
@@ -128,7 +128,7 @@
                   {{ complianceLevelLabel(calcResult.compliance_level) }}
                 </el-tag>
               </el-descriptions-item>
-              <el-descriptions-item label="扣款比例">{{ fmtNumber(calcResult.deduction_ratio * 100, 0) }}%</el-descriptions-item>
+              <el-descriptions-item label="扣款比例">{{ fmtNumber(Number(calcResult.deduction_ratio) * 100, 0) }}%</el-descriptions-item>
               <el-descriptions-item label="扣款金额" :style="{color: calcResult.deduction_amount > 0 ? '#f56c6c' : ''}">
                 {{ fmtMoney(calcResult.deduction_amount) }}
               </el-descriptions-item>
@@ -202,7 +202,7 @@
               {{ complianceLevelLabel(detail.compliance_level) }}
             </el-tag>
           </el-descriptions-item>
-          <el-descriptions-item label="扣款比例">{{ fmtNumber(detail.deduction_ratio * 100, 0) }}%</el-descriptions-item>
+          <el-descriptions-item label="扣款比例">{{ fmtNumber(Number(detail.deduction_ratio) * 100, 0) }}%</el-descriptions-item>
           <el-descriptions-item label="扣款金额" :style="{color: detail.deduction_amount > 0 ? '#f56c6c' : ''}">
             {{ fmtMoney(detail.deduction_amount) }}
           </el-descriptions-item>
