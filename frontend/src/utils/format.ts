@@ -73,6 +73,14 @@ export const tagStatusMap: Record<string, { label: string; type: string }> = {
   low_battery: { label: '低电量', type: 'warning' },
 };
 
+export const roleMap: Record<string, string> = {
+  driver: '司机',
+  qc: '质控员',
+  warehouse_manager: '仓储主管',
+  quality_director: '质量总监',
+  admin: '系统管理员',
+};
+
 export function fmtDate(s: string | undefined, fmt = 'YYYY-MM-DD HH:mm:ss'): string {
   if (!s) return '-';
   return dayjs(s).format(fmt);

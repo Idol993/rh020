@@ -82,27 +82,120 @@
             <div class="section-title">
               <el-icon style="margin-right:6px"><DataAnalysis /></el-icon>
               {{ selectedCargo.name }} - 温控详情
+              <span style="flex:1"></span>
+              <el-button size="small" @click="refreshDetail">
+                <el-icon style="margin-right:4px"><Refresh /></el-icon>刷新曲线
+              </el-button>
             </div>
 
-            <el-descriptions :column="3" border size="small" style="margin-bottom:16px">
-              <el-descriptions-item label="批次号">{{ selectedCargo.cargo_no }}</el-descriptions-item>
-              <el-descriptions-item label="货物名称">{{ selectedCargo.name }}</el-descriptions-item>
-              <el-descriptions-item label="品类">{{ categoryMap[selectedCargo.category] }}</el-descriptions-item>
-              <el-descriptions-item label="温度阈值">
-                <el-tag type="success" effect="plain">{{ selectedCargo.temp_min }} ~ {{ selectedCargo.temp_max }} ℃</el-tag>
-              </el-descriptions-item>
-              <el-descriptions-item label="湿度阈值">
-                <el-tag type="primary" effect="plain">{{ selectedCargo.humidity_min }} ~ {{ selectedCargo.humidity_max }} %</el-tag>
-              </el-descriptions-item>
-              <el-descriptions-item label="当前位置">{{ selectedCargo.current_location || '-' }}</el-descriptions-item>
-            </el-descriptions>
+            <el-alert
+              v-if="isTempAbnormal(selectedCargo) || hasActiveWarning"
+              :title="warningTitle"
+              type="warning"
+              show-icon
+              :closable="false"
+              style="margin-bottom:12px"
+            >
+              <template #default>
+                <div style="display:flex;align-items:center;gap:12px">
+                  <span>当前温度 <b :style="{color:'#f56c6c'}">{{ fmtNumber(selectedCargo.current_temp, 1) }}℃</b>，阈值范围 {{ selectedCargo.temp_min }}~{{ selectedCargo.temp_max }}℃</span>
+                  <el-button type="danger" size="small" @click="openWarningModal">
+                    <el-icon style="margin-right:4px"><WarningFilled /></el-icon>生成异常记录
+                  </el-button>
+                </div>
+              </template>
+            </el-alert>
+
+            <el-row :gutter="12" style="margin-bottom:12px">
+              <el-col :span="8">
+                <div class="info-card">
+                  <div class="info-label">
+                    <el-icon style="margin-right:4px;color:#409eff"><DataLine /></el-icon>
+                    温度阈值
+                  </div>
+                  <div class="info-value">
+                    <el-tag type="success" effect="plain">{{ selectedCargo.temp_min }} ~ {{ selectedCargo.temp_max }} ℃</el-tag>
+                  </div>
+                </div>
+              </el-col>
+              <el-col :span="8">
+                <div class="info-card">
+                  <div class="info-label">
+                    <el-icon style="margin-right:4px;color:#67c23a"><Watermelon /></el-icon>
+                    湿度阈值
+                  </div>
+                  <div class="info-value">
+                    <el-tag type="primary" effect="plain">{{ selectedCargo.humidity_min }} ~ {{ selectedCargo.humidity_max }} %</el-tag>
+                  </div>
+                </div>
+              </el-col>
+              <el-col :span="8">
+                <div class="info-card">
+                  <div class="info-label">
+                    <el-icon style="margin-right:4px;color:#e6a23c"><Battery /></el-icon>
+                    标签电量
+                  </div>
+                  <div class="info-value">
+                    <span :style="{color: selectedCargo.battery_level < 20 ? '#f56c6c' : '#67c23a', fontWeight: 600}">
+                      {{ selectedCargo.battery_level || '-' }}%
+                    </span>
+                  </div>
+                </div>
+              </el-col>
+            </el-row>
+
+            <el-row :gutter="12" style="margin-bottom:12px">
+              <el-col :span="12">
+                <div class="info-card">
+                  <div class="info-label">
+                    <el-icon style="margin-right:4px;color:#909399"><Location /></el-icon>
+                    最后上报位置
+                  </div>
+                  <div class="info-value">{{ selectedCargo.current_location || '-' }}</div>
+                </div>
+              </el-col>
+              <el-col :span="12">
+                <div class="info-card">
+                  <div class="info-label">
+                    <el-icon style="margin-right:4px;color:#909399"><Clock /></el-icon>
+                    最近上报时间
+                  </div>
+                  <div class="info-value">{{ fmtDate(selectedCargo.last_report_time) || '-' }}</div>
+                </div>
+              </el-col>
+            </el-row>
 
             <div class="chart-box">
               <div class="chart-title">
                 <el-icon style="margin-right:6px"><TrendCharts /></el-icon>
                 温度湿度实时曲线
+                <span style="flex:1"></span>
+                <el-tag size="small" type="info" effect="plain">{{ tempData.length }} 个数据点</el-tag>
               </div>
-              <div ref="chartRef" class="echarts" style="height:calc(100vh - 420px)"></div>
+              <div ref="chartRef" class="echarts" style="height:calc(100vh - 560px)"></div>
+            </div>
+
+            <div class="section-title" style="margin-top:12px">
+              <el-icon style="margin-right:6px"><Warning /></el-icon>
+              最近异常
+            </div>
+            <div v-loading="loadingExceptions" style="min-height:80px">
+              <div v-if="recentExceptions.length > 0" class="exception-list">
+                <div
+                  v-for="e in recentExceptions"
+                  :key="e.id"
+                  class="exception-item"
+                  @click="$router.push('/exceptions')"
+                >
+                  <el-tag size="small" :type="exceptionLevelMap[e.level]?.type" style="margin-right:8px">
+                    {{ exceptionLevelMap[e.level]?.label }}
+                  </el-tag>
+                  <span class="exception-desc">{{ e.description }}</span>
+                  <span class="exception-status">{{ exceptionStatusMap[e.status]?.label }}</span>
+                  <span class="exception-time">{{ fmtDate(e.occur_time, 'MM-DD HH:mm') }}</span>
+                </div>
+              </div>
+              <el-empty v-else description="暂无异常记录" :image-size="60" style="padding:10px 0" />
             </div>
           </template>
 
@@ -116,15 +209,64 @@
         </el-col>
       </el-row>
     </div>
+
+    <el-dialog v-model="warningVisible" title="超阈值预警处理" width="560px">
+      <el-form :model="warningForm" label-width="90px">
+        <el-form-item label="异常类型">
+          <el-select v-model="warningForm.type" style="width:100%">
+            <el-option label="温度超标" value="over_temp" />
+            <el-option label="温度过低" value="low_temp" />
+            <el-option label="湿度异常" value="humidity_abnormal" />
+            <el-option label="单次超温超时" value="overtime_single" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="紧急程度">
+          <el-select v-model="warningForm.level" style="width:100%">
+            <el-option label="一般" value="normal" />
+            <el-option label="较严重" value="serious" />
+            <el-option label="严重" value="critical" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="异常描述">
+          <el-input
+            v-model="warningForm.description"
+            type="textarea"
+            :rows="2"
+            :placeholder="`当前温度 ${selectedCargo?.current_temp}℃，超过阈值 ${selectedCargo?.temp_min}~${selectedCargo?.temp_max}℃`"
+          />
+        </el-form-item>
+        <el-form-item label="阈值信息">
+          <el-input v-model="warningForm.threshold_info" placeholder="如：温度阈值 2~8℃，单次超温阈值 15分钟" />
+        </el-form-item>
+        <el-form-item label="分配处理人">
+          <el-select v-model="warningForm.handler_id" filterable placeholder="选择处理人（可选）" clearable style="width:100%">
+            <el-option
+              v-for="u in assignableUsers"
+              :key="u.id"
+              :label="`${u.name} (${roleMap[u.role]})`"
+              :value="u.id"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="warningVisible = false">取消</el-button>
+        <el-button type="primary" :loading="submittingWarning" @click="submitWarning">生成异常记录</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, onMounted, onUnmounted, nextTick, watch, computed } from 'vue';
 import * as echarts from 'echarts';
-import { Monitor, Refresh, RefreshRight, List, DataAnalysis, TrendCharts, Pointer } from '@element-plus/icons-vue';
+import {
+  Monitor, Refresh, RefreshRight, List, DataAnalysis, TrendCharts, Pointer,
+  DataLine, Watermelon, Battery, Location, Clock, WarningFilled, Warning
+} from '@element-plus/icons-vue';
+import { ElMessage } from 'element-plus';
 import request from '@/utils/request';
-import { fmtDate, fmtNumber, categoryMap, cargoStatusMap } from '@/utils/format';
+import { fmtDate, fmtNumber, categoryMap, cargoStatusMap, exceptionLevelMap, exceptionStatusMap, roleMap } from '@/utils/format';
 
 const STORAGE_KEY = 'monitor_selected_cargo_id';
 const loading = ref(false);
@@ -134,6 +276,36 @@ const selectedCargoId = ref<string>(sessionStorage.getItem(STORAGE_KEY) || '');
 const chartRef = ref<HTMLDivElement>();
 let chartInstance: echarts.ECharts | null = null;
 let timer: number | null = null;
+const tempData = ref<any[]>([]);
+
+const recentExceptions = ref<any[]>([]);
+const loadingExceptions = ref(false);
+
+const warningVisible = ref(false);
+const submittingWarning = ref(false);
+const assignableUsers = ref<any[]>([]);
+const warningForm = reactive({
+  type: 'over_temp',
+  level: 'serious',
+  description: '',
+  threshold_info: '',
+  handler_id: '',
+});
+
+const hasActiveWarning = computed(() => {
+  if (!selectedCargo.value) return false;
+  return tempData.value.length > 0 && tempData.value.slice(-3).some(d =>
+    d.temperature < selectedCargo.value.temp_min || d.temperature > selectedCargo.value.temp_max
+  );
+});
+
+const warningTitle = computed(() => {
+  if (!selectedCargo.value) return '';
+  const t = selectedCargo.value.current_temp;
+  if (t > selectedCargo.value.temp_max) return '⚠️ 温度超标预警';
+  if (t < selectedCargo.value.temp_min) return '⚠️ 温度过低预警';
+  return '⚠️ 实时曲线超阈值';
+});
 
 const filters = reactive({ status: '', category: '' });
 
@@ -186,6 +358,12 @@ async function handleRowChange(row: any) {
   await loadDetailAndRender();
 }
 
+async function refreshDetail() {
+  if (!selectedCargo.value) return;
+  await loadDetailAndRender();
+  ElMessage.success('曲线数据已刷新');
+}
+
 async function loadDetailAndRender() {
   if (!selectedCargo.value) return;
   try {
@@ -194,24 +372,80 @@ async function loadDetailAndRender() {
     if (data.cargo) {
       selectedCargo.value = { ...selectedCargo.value, ...data.cargo };
     }
+    tempData.value = data.temperature_data || [];
     await nextTick();
-    const tempData = data.temperature_data || [];
-    renderChart(tempData);
+    renderChart(tempData.value);
+    await loadRecentExceptions();
   } catch (e) {
     await nextTick();
+    tempData.value = [];
     renderChart([]);
   }
 }
 
-function renderChart(tempData: any[]) {
+async function loadRecentExceptions() {
+  if (!selectedCargo.value) return;
+  loadingExceptions.value = true;
+  try {
+    const res = await request.get<any>('/cargos/' + selectedCargo.value.id + '/recent-exceptions');
+    recentExceptions.value = res.data || [];
+  } finally {
+    loadingExceptions.value = false;
+  }
+}
+
+async function loadAssignableUsers() {
+  try {
+    const res = await request.get<any>('/exceptions/assignable/users');
+    assignableUsers.value = res.data || [];
+  } catch {}
+}
+
+function openWarningModal() {
+  if (!selectedCargo.value) return;
+  const isOver = selectedCargo.value.current_temp > selectedCargo.value.temp_max;
+  warningForm.type = isOver ? 'over_temp' : 'low_temp';
+  warningForm.level = 'serious';
+  warningForm.description = `${isOver ? '温度超标' : '温度过低'}: ${selectedCargo.value.current_temp}℃，阈值: ${selectedCargo.value.temp_min}~${selectedCargo.value.temp_max}℃`;
+  warningForm.threshold_info = `温度阈值: ${selectedCargo.value.temp_min}~${selectedCargo.value.temp_max}℃，湿度阈值: ${selectedCargo.value.humidity_min}~${selectedCargo.value.humidity_max}%`;
+  warningForm.handler_id = '';
+  loadAssignableUsers();
+  warningVisible.value = true;
+}
+
+async function submitWarning() {
+  if (!selectedCargo.value || !warningForm.description) return;
+  submittingWarning.value = true;
+  try {
+    const res = await request.post<any>('/exceptions/create-from-warning', {
+      cargo_id: selectedCargo.value.id,
+      tag_id: selectedCargo.value.tag_id || selectedCargo.value.tag_no || null,
+      type: warningForm.type,
+      level: warningForm.level,
+      description: warningForm.description,
+      temperature: selectedCargo.value.current_temp,
+      humidity: selectedCargo.value.current_humidity,
+      location: selectedCargo.value.current_location,
+      threshold_info: warningForm.threshold_info,
+      handler_id: warningForm.handler_id || undefined,
+    });
+    ElMessage.success('异常记录已生成，' + (warningForm.handler_id ? '已自动分配处理人' : '请尽快分配处理人'));
+    warningVisible.value = false;
+    await loadRecentExceptions();
+  } finally {
+    submittingWarning.value = false;
+  }
+}
+
+function renderChart(tempDataArr: any[]) {
   if (!chartRef.value) return;
   if (!chartInstance) {
     chartInstance = echarts.init(chartRef.value);
   }
 
-  const times = tempData.map(d => fmtDate(d.collection_time, 'MM-DD HH:mm'));
-  const temps = tempData.map(d => d.temperature);
-  const humids = tempData.map(d => d.humidity);
+  const times = tempDataArr.map(d => fmtDate(d.collection_time, 'MM-DD HH:mm'));
+  const temps = tempDataArr.map(d => d.temperature);
+  const humids = tempDataArr.map(d => d.humidity);
   const tempMin = selectedCargo.value?.temp_min;
   const tempMax = selectedCargo.value?.temp_max;
 
@@ -306,7 +540,12 @@ function handleResize() {
 
 onMounted(() => {
   loadCargos();
-  timer = window.setInterval(loadCargos, 30000);
+  timer = window.setInterval(async () => {
+    await loadCargos();
+    if (selectedCargo.value) {
+      await loadDetailAndRender();
+    }
+  }, 30000);
   window.addEventListener('resize', handleResize);
 });
 
@@ -330,5 +569,58 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   height: calc(100vh - 240px);
+}
+.info-card {
+  padding: 10px 14px;
+  background: #fafafa;
+  border-radius: 6px;
+}
+.info-label {
+  font-size: 12px;
+  color: #909399;
+  display: flex;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.info-value {
+  font-size: 14px;
+  color: #303133;
+}
+.exception-list {
+  max-height: 140px;
+  overflow-y: auto;
+}
+.exception-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  background: #fafafa;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.exception-item:hover {
+  background: #f0f0f0;
+}
+.exception-desc {
+  flex: 1;
+  font-size: 13px;
+  color: #303133;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 12px;
+}
+.exception-status {
+  font-size: 12px;
+  color: #909399;
+  margin-right: 12px;
+}
+.exception-time {
+  font-size: 12px;
+  color: #909399;
+  min-width: 100px;
+  text-align: right;
 }
 </style>

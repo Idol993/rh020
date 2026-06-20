@@ -62,9 +62,10 @@
         <el-table-column label="时间" width="160">
           <template #default="{row}">{{ fmtDate(row.outbound_time || row.created_at, 'MM-DD HH:mm') }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="260" fixed="right">
+        <el-table-column label="操作" width="340" fixed="right">
           <template #default="{row}">
             <el-button type="primary" link size="small" @click="$router.push('/cargos/'+row.id)">详情</el-button>
+            <el-button type="primary" link size="small" @click="openTimeline(row)">流程视图</el-button>
             <el-button type="primary" link size="small" @click="openBind(row)" v-if="row.status==='pending_outbound' && (userStore.isQC||userStore.isWHManager)">绑定标签</el-button>
             <el-button type="primary" link size="small" @click="onCheckDevice(row)" v-if="['outbound','in_transit','arrived'].includes(row.status)">设备校验</el-button>
             <el-button type="success" link size="small" @click="onStart(row)" v-if="['outbound'].includes(row.status) && (userStore.isQC||userStore.isDriver)">启运</el-button>
@@ -152,6 +153,75 @@
         <el-button type="primary" @click="onBind">确认绑定</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="timelineVisible" title="出库到入库流程视图" width="780px">
+      <div v-if="timelineCargo" style="margin-bottom:16px">
+        <el-descriptions :column="3" border size="small">
+          <el-descriptions-item label="批次号">{{ timelineCargo.cargo_no }}</el-descriptions-item>
+          <el-descriptions-item label="货物名称">{{ timelineCargo.name }}</el-descriptions-item>
+          <el-descriptions-item label="当前状态">
+            <el-tag :type="cargoStatusMap[timelineCargo.status]?.type">{{ cargoStatusMap[timelineCargo.status]?.label }}</el-tag>
+          </el-descriptions-item>
+        </el-descriptions>
+      </div>
+      <div v-loading="loadingTimeline">
+        <el-timeline v-if="timelineNodes.length > 0">
+          <el-timeline-item
+            v-for="(n, i) in timelineNodes"
+            :key="n.key"
+            :type="nodeTypeColor(n.status)"
+            :hollow="n.status === 'pending'"
+            :color="n.status === 'current' ? '#409eff' : undefined"
+          >
+            <div style="display:flex;justify-content:space-between;align-items:flex-start">
+              <div>
+                <div style="font-weight:600;font-size:14px;color:#303133">
+                  <el-tag
+                    v-if="n.status === 'current'"
+                    type="primary"
+                    effect="dark"
+                    size="small"
+                    style="margin-right:8px"
+                  >当前节点</el-tag>
+                  <el-tag
+                    v-else-if="n.status === 'done'"
+                    type="success"
+                    effect="light"
+                    size="small"
+                    style="margin-right:8px"
+                  >已完成</el-tag>
+                  <el-tag
+                    v-else
+                    type="info"
+                    effect="plain"
+                    size="small"
+                    style="margin-right:8px"
+                  >待完成</el-tag>
+                  <span>{{ i + 1 }}. {{ n.label }}</span>
+                </div>
+                <div style="font-size:12px;color:#909399;margin-top:2px">
+                  <template v-if="n.status === 'done'">
+                    <div>操作人：{{ n.user || '-' }}</div>
+                    <div>时间：{{ n.time ? fmtDate(n.time) : '-' }}</div>
+                    <div v-if="n.remark" style="margin-top:4px;color:#606266">备注：{{ n.remark }}</div>
+                  </template>
+                  <template v-else-if="n.status === 'current'">
+                    <el-tag type="warning" size="small">进行中</el-tag>
+                  </template>
+                  <template v-else>
+                    <span style="color:#c0c4cc">等待上游节点完成</span>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </el-timeline-item>
+        </el-timeline>
+        <el-empty v-else description="暂无流程数据" :image-size="80" style="padding:30px 0" />
+      </div>
+      <template #footer>
+        <el-button @click="timelineVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -206,6 +276,35 @@ const bindVisible = ref(false);
 const currentCargo = ref<any>();
 const selectedTagId = ref('');
 const idleTags = ref<any[]>([]);
+
+const timelineVisible = ref(false);
+const loadingTimeline = ref(false);
+const timelineCargo = ref<any>(null);
+const timelineNodes = ref<any[]>([]);
+
+function nodeTypeColor(status: string): 'primary' | 'success' | 'info' | 'warning' {
+  if (status === 'done') return 'success';
+  if (status === 'current') return 'primary';
+  return 'info';
+}
+
+async function openTimeline(row: any) {
+  timelineCargo.value = row;
+  timelineVisible.value = true;
+  loadingTimeline.value = true;
+  timelineNodes.value = [];
+  try {
+    const res = await request.get<any>('/cargos/' + row.id + '/timeline');
+    timelineNodes.value = res.data.nodes || [];
+    if (res.data.cargo) {
+      timelineCargo.value = { ...timelineCargo.value, ...res.data.cargo };
+    }
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.message || '加载流程数据失败');
+  } finally {
+    loadingTimeline.value = false;
+  }
+}
 
 async function loadList() {
   loading.value = true;

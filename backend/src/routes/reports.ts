@@ -117,6 +117,87 @@ reportRouter.post('/generate', requireRoles(['qc', 'warehouse_manager', 'quality
   ok(res, { id, report_no, conclusion, temp_pass_rate: tempRate }, '合规报告生成成功');
 });
 
+reportRouter.post('/:id/recalculate', requireRoles(['qc', 'warehouse_manager', 'quality_director']), (req: AuthRequest, res) => {
+  const report = db.prepare('SELECT * FROM compliance_reports WHERE id = ?').get(req.params.id) as any;
+  if (!report) return fail(res, '报告不存在', 404, 404);
+
+  const cargo = db.prepare('SELECT * FROM cargos WHERE id = ?').get(report.cargo_id) as Cargo | undefined;
+  if (!cargo) return fail(res, '关联货物不存在');
+
+  const rule = db.prepare('SELECT * FROM temperature_rules WHERE id = ?').get(cargo.rule_id) as TemperatureRule | undefined;
+  if (!rule) return fail(res, '温控规则不存在');
+
+  const data = db.prepare(`SELECT * FROM temperature_data WHERE cargo_id = ? AND collection_time >= ? AND collection_time <= ? ORDER BY collection_time`)
+    .all(cargo.id, report.start_time, report.end_time) as any[];
+
+  if (data.length === 0) return fail(res, '该时段没有温控数据，无法重新核算');
+
+  const tempQualified = data.filter(d => d.temperature >= rule.temp_min && d.temperature <= rule.temp_max).length;
+  const humidQualified = data.filter(d => d.humidity >= rule.humidity_min && d.humidity <= rule.humidity_max).length;
+  const tempRate = tempQualified / data.length;
+  const humidRate = humidQualified / data.length;
+
+  const exceptions = db.prepare('SELECT * FROM exception_records WHERE cargo_id = ? AND occur_time >= ? AND occur_time <= ?')
+    .all(cargo.id, report.start_time, report.end_time) as any[];
+  const criticalCount = exceptions.filter(e => e.level === 'critical' || e.level === 'serious').length;
+  const totalCount = exceptions.length;
+  const totalOvertime = exceptions.filter(e => e.type === 'overtime_single' || e.type === 'overtime_total')
+    .reduce((sum, e) => sum + (e.duration_minutes || 0), 0);
+  const doorOpenCount = exceptions.filter(e => e.type === 'door_open_long').length;
+  const totalDoorOpen = exceptions.filter(e => e.type === 'door_open_long').reduce((sum, e) => sum + (e.duration_minutes || 0), 0);
+
+  let conclusion: ComplianceReport['conclusion'];
+  let conclusion_detail = '';
+  const pct = (n: number) => `${(n * 100).toFixed(2)}%`;
+  const overtimeLimit = rule.total_overtime_limit || Infinity;
+  const overtimeCheck = !rule.total_overtime_limit || totalOvertime < overtimeLimit;
+
+  if (tempRate >= 0.99 && criticalCount === 0 && overtimeCheck) {
+    conclusion = 'compliant';
+    conclusion_detail = `温度合规，全程温度达标率${pct(tempRate)}，无严重异常，符合行业规范要求。`;
+  } else if (tempRate >= 0.95 && criticalCount === 0) {
+    conclusion = 'basically_compliant';
+    conclusion_detail = `温度达标率${pct(tempRate)}，存在一般异常${totalCount}起，经核查不影响货物质量，建议后续需加强监控。`;
+  } else {
+    conclusion = 'non_compliant';
+    conclusion_detail = `温度达标率${pct(tempRate)}，存在严重异常${criticalCount}起，不符合规范要求，建议启动后续处理。`;
+  }
+
+  const n = now();
+  db.prepare(`UPDATE compliance_reports SET
+    total_data_points = ?, temp_qualified_count = ?, humidity_qualified_count = ?,
+    temp_pass_rate = ?, humidity_pass_rate = ?, exception_count = ?, critical_exception_count = ?,
+    total_overtime_minutes = ?, door_open_count = ?, total_door_open_minutes = ?,
+    conclusion = ?, conclusion_detail = ?, generated_by = ?, generated_at = ?,
+    signed_by = NULL, signed_at = NULL
+    WHERE id = ?`).run(
+    data.length, tempQualified, humidQualified,
+    tempRate, humidRate, totalCount, criticalCount,
+    totalOvertime, doorOpenCount, totalDoorOpen,
+    conclusion, conclusion_detail, req.user!.id, n,
+    report.id
+  );
+
+  addAuditLog(req.user!.id, 'report', 'recalculate', { targetId: report.id });
+  ok(res, { id: report.id, temp_pass_rate: tempRate }, '报告重新核算成功，原签章已清除');
+});
+
+reportRouter.post('/fix-old-rates', requireRoles(['quality_director']), (req: AuthRequest, res) => {
+  const reports = db.prepare('SELECT id, temp_pass_rate, humidity_pass_rate FROM compliance_reports').all() as any[];
+  let fixedCount = 0;
+  for (const r of reports) {
+    const newTemp = Number(r.temp_pass_rate) > 1 ? Number(r.temp_pass_rate) / 100 : r.temp_pass_rate;
+    const newHumid = Number(r.humidity_pass_rate) > 1 ? Number(r.humidity_pass_rate) / 100 : r.humidity_pass_rate;
+    if (newTemp !== r.temp_pass_rate || newHumid !== r.humidity_pass_rate) {
+      db.prepare('UPDATE compliance_reports SET temp_pass_rate = ?, humidity_pass_rate = ? WHERE id = ?')
+        .run(newTemp, newHumid, r.id);
+      fixedCount++;
+    }
+  }
+  addAuditLog(req.user!.id, 'report', 'fix_old_rates', { targetType: 'batch', remark: `修正 ${fixedCount} 份报告` });
+  ok(res, { fixed: fixedCount, total: reports.length }, `已修正 ${fixedCount} 份旧报告的合格率数据`);
+});
+
 reportRouter.post('/:id/sign', requireRoles(['quality_director']), (req: AuthRequest, res) => {
   const report = db.prepare('SELECT * FROM compliance_reports WHERE id = ?').get(req.params.id) as any;
   if (!report) return fail(res, '报告不存在', 404, 404);

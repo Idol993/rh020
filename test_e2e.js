@@ -181,6 +181,54 @@ async function test() {
   const statsOk = stats.data.data.temp_pass_rate_30d > 0 && stats.data.data.temp_pass_rate_30d <= 100;
   console.log(`${statsOk ? '✅' : '❌'} Dashboard达标率是百分比(0~100): ${stats.data.data.temp_pass_rate_30d}%`);
 
+  console.log('\n=== 新功能1：货物流程时间线 ===');
+  const cargoForTimeline = await axios.get(BASE + '/cargos', { headers: headers(), params: { pageSize: 1 } });
+  const c1 = cargoForTimeline.data.data.list[0];
+  const timeline = await axios.get(BASE + '/cargos/' + c1.id + '/timeline', { headers: headers() });
+  const tlOk = Array.isArray(timeline.data.data.nodes) && timeline.data.data.nodes.length === 7;
+  console.log(`${tlOk ? '✅' : '❌'} 流程节点7个: ${timeline.data.data.nodes?.map(n=>`${n.label}=${n.status}`).join(', ')}`);
+  const doneCount = timeline.data.data.nodes.filter(n => n.status === 'done').length;
+  console.log(`已完成节点数: ${doneCount} 个`);
+
+  console.log('\n=== 新功能2：最近异常查询 ===');
+  const recent = await axios.get(BASE + '/cargos/' + c1.id + '/recent-exceptions', { headers: headers() });
+  console.log(`✅ 最近异常接口正常，返回 ${recent.data.data?.length || 0} 条`);
+
+  console.log('\n=== 新功能3：报告重新核算 ===');
+  const reportForRecalc = firstReport;
+  if (reportForRecalc && !reportForRecalc.signed_by) {
+    const recalc = await axios.post(BASE + '/reports/' + reportForRecalc.id + '/recalculate', {}, { headers: headers() });
+    const recalcOk = recalc.data.code === 0 && recalc.data.data.temp_pass_rate !== undefined;
+    console.log(`${recalcOk ? '✅' : '❌'} 报告重新核算: new_rate=${recalc.data.data?.temp_pass_rate}, msg=${recalc.data.message}`);
+  } else {
+    console.log('ℹ️  跳过重新核算（首个报告已签章或不存在）');
+  }
+
+  console.log('\n=== 新功能4：批量修正旧报告合格率 ===');
+  const fix = await axios.post(BASE + '/reports/fix-old-rates', {}, { headers: headers() });
+  const fixOk = fix.data.code === 0;
+  console.log(`${fixOk ? '✅' : '❌'} 批量修正: fixed=${fix.data.data?.fixed}/${fix.data.data?.total}, msg=${fix.data.message}`);
+
+  console.log('\n=== 新功能5：可分配处理人列表 ===');
+  const assignUsers = await axios.get(BASE + '/exceptions/assignable/users', { headers: headers() });
+  const usersOk = Array.isArray(assignUsers.data.data) && assignUsers.data.data.length > 0;
+  console.log(`${usersOk ? '✅' : '❌'} 可分配用户: ${assignUsers.data.data?.map(u => u.name).join(', ')}`);
+
+  console.log('\n=== 新功能6：预警生成异常记录 ===');
+  const warningExc = await axios.post(BASE + '/exceptions/create-from-warning', {
+    cargo_id: c1.id,
+    type: 'over_temp',
+    level: 'serious',
+    description: '测试: 温度超标 15℃，阈值 2~8℃',
+    temperature: 15,
+    humidity: 60,
+    location: '北京市朝阳区',
+    threshold_info: '温度阈值 2~8℃，湿度阈值 45~75%',
+    handler_id: assignUsers.data.data[0]?.id,
+  }, { headers: headers() });
+  const newExcOk = warningExc.data.code === 0 && warningExc.data.data.id;
+  console.log(`${newExcOk ? '✅' : '❌'} 从预警生成异常: id=${warningExc.data.data?.id}, status=${warningExc.data.data?.status}`);
+
   console.log('\n=== 测试完成 ===\n');
 }
 

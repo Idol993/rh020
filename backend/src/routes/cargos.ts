@@ -149,6 +149,81 @@ cargoRouter.put('/:id/status', requireRoles(['qc', 'warehouse_manager', 'quality
   ok(res, null, '状态已更新');
 });
 
+cargoRouter.get('/:id/timeline', (req: AuthRequest, res) => {
+  const cargo = db.prepare('SELECT * FROM cargos WHERE id = ?').get(req.params.id) as any;
+  if (!cargo) return fail(res, '货物不存在', 404, 404);
+
+  const audits = db.prepare(`SELECT a.*, u.name as user_name FROM audit_logs a 
+    LEFT JOIN users u ON a.user_id = u.id
+    WHERE a.target_id = ? AND a.module = 'cargo' ORDER BY a.created_at ASC`)
+    .all(req.params.id) as any[];
+
+  const reports = db.prepare(`SELECT id, report_no, generated_at FROM compliance_reports WHERE cargo_id = ? ORDER BY generated_at DESC LIMIT 1`)
+    .all(req.params.id) as any[];
+
+  const bindings = db.prepare(`SELECT * FROM binding_logs WHERE cargo_id = ? ORDER BY created_at ASC`)
+    .all(req.params.id) as any[];
+
+  const nodes: { key: string; label: string; status: 'done' | 'pending' | 'current'; time: string | null; user: string | null; remark: string }[] = [
+    { key: 'create', label: '创建批次', status: 'pending', time: null, user: null, remark: '' },
+    { key: 'bind_tag', label: '绑定标签', status: 'pending', time: null, user: null, remark: '' },
+    { key: 'verify_device', label: '设备校验', status: 'pending', time: null, user: null, remark: '' },
+    { key: 'start_transport', label: '启运出库', status: 'pending', time: null, user: null, remark: '' },
+    { key: 'arrive', label: '到库', status: 'pending', time: null, user: null, remark: '' },
+    { key: 'accept', label: '验收入库', status: 'pending', time: null, user: null, remark: '' },
+    { key: 'generate_report', label: '生成合规报告', status: 'pending', time: null, user: null, remark: '' },
+  ];
+
+  const findAudit = (action: string) => audits.find(a => a.action === action);
+
+  const setNode = (key: string, audit: any, extraRemark = '') => {
+    const node = nodes.find(n => n.key === key);
+    if (node && audit) {
+      node.status = 'done';
+      node.time = audit.created_at;
+      node.user = audit.user_name || audit.user_id;
+      node.remark = audit.remark || extraRemark;
+    }
+  };
+
+  setNode('create', findAudit('create'));
+  const bind = bindings.find(b => b.operation_type === 'bind');
+  if (bind) {
+    const n = nodes.find(n => n.key === 'bind_tag');
+    if (n) { n.status = 'done'; n.time = bind.created_at; n.remark = '绑定标签成功'; }
+  }
+  setNode('verify_device', findAudit('verify_device'));
+  setNode('start_transport', findAudit('start_transport'));
+  setNode('arrive', findAudit('arrive'));
+  setNode('accept', findAudit('update_status'), '货物验收完成');
+
+  if (reports.length > 0) {
+    const n = nodes.find(n => n.key === 'generate_report');
+    if (n) { n.status = 'done'; n.time = reports[0].generated_at; n.remark = '报告编号: ' + reports[0].report_no; }
+  }
+
+  const statusWeights: Record<string, number> = {
+    pending_outbound: 0, outbound: 1, in_transit: 2, arrived: 3, in_warehouse: 4, accepted: 5, rejected: 5,
+  };
+  const currentWeight = statusWeights[cargo.status] ?? 0;
+
+  for (let i = 0; i < nodes.length; i++) {
+    if (nodes[i].status === 'pending' && i <= currentWeight + 1) {
+      nodes[i].status = 'current';
+      break;
+    }
+  }
+
+  ok(res, { cargo, nodes, audits, reports });
+});
+
+cargoRouter.get('/:id/recent-exceptions', (req: AuthRequest, res) => {
+  const data = db.prepare(`SELECT e.*, c.cargo_no, c.name as cargo_name
+    FROM exception_records e LEFT JOIN cargos c ON e.cargo_id = c.id
+    WHERE e.cargo_id = ? ORDER BY e.occur_time DESC LIMIT 3`).all(req.params.id);
+  ok(res, data);
+});
+
 export const tagRouter = Router();
 tagRouter.use(authMiddleware);
 

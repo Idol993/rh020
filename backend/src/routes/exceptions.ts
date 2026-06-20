@@ -233,6 +233,39 @@ exceptionRouter.put('/:id/assign', requireRoles(['qc', 'warehouse_manager', 'qua
   ok(res, null, '已指派，状态更新为处理中');
 });
 
+exceptionRouter.post('/create-from-warning', requireRoles(['qc', 'warehouse_manager', 'quality_director']), (req: AuthRequest, res) => {
+  const { cargo_id, tag_id, type, level, description, temperature, humidity, location, threshold_info, handler_id } = req.body;
+  if (!cargo_id || !type || !description) return fail(res, '缺少必要参数');
+
+  const cargo = db.prepare('SELECT * FROM cargos WHERE id = ?').get(cargo_id) as any;
+  if (!cargo) return fail(res, '货物不存在', 404, 404);
+
+  const id = uuidv4();
+  const n = now();
+  const t = type as ExceptionType;
+  const lv = (level || levelMap[type] || 'normal') as ExceptionLevel;
+  const roles = notifyMap[lv];
+  const users = db.prepare(`SELECT id FROM users WHERE role IN (${roles.map(() => '?').join(',')})`).all(...roles) as any[];
+  const finalHandler = handler_id || users[0]?.id || null;
+
+  db.prepare(`INSERT INTO exception_records (id, type, level, cargo_id, tag_id, warehouse_id, zone_id, location,
+    description, temperature, humidity, threshold_info, duration_minutes, occur_time, status,
+    current_handler, notified_users, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, t, lv, cargo_id, tag_id || null, cargo.warehouse_id || null, null,
+      location || cargo.current_location || null, description,
+      temperature ?? null, humidity ?? null, threshold_info || null, null, n,
+      finalHandler ? 'processing' : 'pending', finalHandler, JSON.stringify(users.map(u => u.id)), n);
+
+  addAuditLog(req.user!.id, 'exception', 'create_from_warning', { targetId: id, remark: description });
+  ok(res, { id, status: finalHandler ? 'processing' : 'pending' }, '异常记录已生成');
+});
+
+exceptionRouter.get('/assignable/users', requireRoles(['qc', 'warehouse_manager', 'quality_director']), (req: AuthRequest, res) => {
+  const users = db.prepare(`SELECT id, name, role, phone FROM users WHERE role IN ('driver','qc','warehouse_manager') ORDER BY role`).all();
+  ok(res, users);
+});
+
 exceptionRouter.get('/stats/summary', (req: AuthRequest, res) => {
   const sql = `
     SELECT level, status, COUNT(*) as count FROM exception_records GROUP BY level, status

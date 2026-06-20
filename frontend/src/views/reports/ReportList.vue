@@ -7,6 +7,9 @@
           合规报告
         </div>
         <div>
+          <el-button v-if="userStore.isDirector" type="warning" @click="fixOldRates">
+            <el-icon style="margin-right:4px"><MagicStick /></el-icon>批量修正旧数据
+          </el-button>
           <el-button type="primary" @click="showGenerate = true">
             <el-icon style="margin-right:4px"><Plus /></el-icon>生成报告
           </el-button>
@@ -77,6 +80,18 @@
             <el-tag size="small" :type="row.signed_by ? 'success' : 'info'" effect="plain">
               {{ row.signed_by ? `已签章：${row.signed_name || row.signed_by}` : '未签章' }}
             </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="120" fixed="right">
+          <template #default="{row}">
+            <el-button type="primary" link size="small" @click.stop="openDetail(row)">查看</el-button>
+            <el-button
+              type="primary"
+              link
+              size="small"
+              @click.stop="onRecalculate(row)"
+              v-if="userStore.isQC || userStore.isWHManager || userStore.isDirector"
+            >重新核算</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -183,6 +198,11 @@
         </div>
 
         <div style="margin-top:20px;display:flex;justify-content:flex-end;gap:8px">
+          <template v-if="userStore.isQC || userStore.isWHManager || userStore.isDirector">
+            <el-button :loading="recalculating" @click="onRecalculate(detail)" type="primary">
+              <el-icon style="margin-right:4px"><RefreshRight /></el-icon>重新核算
+            </el-button>
+          </template>
           <template v-if="userStore.isDirector && !detail.signed_by">
             <el-button type="primary" :loading="signing" @click="onSign">
               <el-icon style="margin-right:4px"><EditPen /></el-icon>电子签章
@@ -212,7 +232,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { Document, Plus, EditPen } from '@element-plus/icons-vue';
+import { Document, Plus, EditPen, MagicStick, RefreshRight } from '@element-plus/icons-vue';
 import { useUserStore } from '@/stores/user';
 import request from '@/utils/request';
 import { fmtDate, categoryMap, subCategoryMap, conclusionMap } from '@/utils/format';
@@ -228,6 +248,7 @@ const detailVisible = ref(false);
 const currentId = ref('');
 const detail = ref<any>(null);
 const signing = ref(false);
+const recalculating = ref(false);
 
 const showGenerate = ref(false);
 const generating = ref(false);
@@ -296,6 +317,37 @@ async function onGenerate() {
       detailVisible.value = true;
     }
   } finally { generating.value = false; }
+}
+
+async function onRecalculate(row: any) {
+  await ElMessageBox.confirm(
+    `确认重新核算报告 ${row.report_no}？重新核算将更新数据并清除原签章。`,
+    '重新核算',
+    { type: 'warning' }
+  );
+  try {
+    const res = await request.post<any>('/reports/' + row.id + '/recalculate');
+    ElMessage.success(res.data.message || '重新核算成功');
+    loadList();
+    if (currentId.value === row.id) loadDetail();
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.message || '重新核算失败');
+  }
+}
+
+async function fixOldRates() {
+  await ElMessageBox.confirm(
+    '确认批量修正所有旧报告的合格率数据？将把旧数据中大于1的合格率（如98.7）自动除以100转为小数格式（0.987）。',
+    '批量修正',
+    { type: 'warning' }
+  );
+  try {
+    const res = await request.post<any>('/reports/fix-old-rates');
+    ElMessage.success(res.data.message || '修正完成');
+    loadList();
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.message || '修正失败');
+  }
 }
 
 onMounted(() => { loadList(); loadCargos(); });
